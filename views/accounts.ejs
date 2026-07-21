@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Cuentas Zoho · Panel</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <%- include('partials/nav') %>
+  <div class="container">
+    <h1>Cuentas de Zoho Books</h1>
+    <p class="subtitle">Conecta una o varias organizaciones de Zoho Books. Cada una necesita su propio Self Client (Client ID / Secret) creado en la <a href="https://api-console.zoho.com/" target="_blank" style="color: var(--accent);">Zoho API Console</a>.</p>
+
+    <% if (flash) { %><div class="flash"><%= flash %></div><% } %>
+    <% if (error) { %><div class="error"><%= error %></div><% } %>
+
+    <div class="card">
+      <p class="muted" style="margin-top:0;">Redirect URI a registrar en Zoho API Console para esta app:</p>
+      <code style="display:block; padding:8px 10px; background: var(--panel-2); border-radius:6px; border:1px solid var(--border);"><%= redirectUriPreview %></code>
+    </div>
+
+    <div class="card">
+      <% accounts.forEach(function(acc) { %>
+        <div class="account-row" id="account-<%= acc.id %>">
+          <div>
+            <strong><%= acc.name %></strong>
+            <div class="muted" style="font-size:12px;">Org ID: <%= acc.organizationId %> · Region: <%= acc.region %></div>
+            <% if (acc.hasRefreshToken) { %>
+              <span class="badge ok">Conectada</span>
+            <% } else { %>
+              <span class="badge warn">Falta autorizar OAuth</span>
+            <% } %>
+          </div>
+          <div class="account-actions">
+            <a href="/accounts/<%= acc.id %>/connect"><button class="secondary" type="button"><%= acc.hasRefreshToken ? 'Reconectar' : 'Conectar' %></button></a>
+            <form method="POST" action="/accounts/<%= acc.id %>/delete" onsubmit="return confirm('¿Eliminar esta cuenta y su cache?');">
+              <button class="danger" type="submit">Eliminar</button>
+            </form>
+          </div>
+        </div>
+      <% }); %>
+      <% if (accounts.length === 0) { %>
+        <p class="muted">Todavía no has agregado ninguna cuenta.</p>
+      <% } %>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Agregar cuenta nueva</h3>
+      <form method="POST" action="/accounts">
+        <div class="grid">
+          <div>
+            <label>Nombre (para identificarla en el panel)</label>
+            <input type="text" name="name" placeholder="Ej. Books - Marca A" required />
+          </div>
+          <div>
+            <label>Región del datacenter</label>
+            <select name="region">
+              <% Object.entries(regions).forEach(function([key, r]) { %>
+                <option value="<%= key %>"><%= r.label %></option>
+              <% }); %>
+            </select>
+          </div>
+          <div>
+            <label>Organization ID</label>
+            <input type="text" name="organizationId" required />
+          </div>
+          <div>
+            <label>Client ID</label>
+            <input type="text" name="clientId" required />
+          </div>
+          <div>
+            <label>Client Secret</label>
+            <input type="text" name="clientSecret" placeholder="Se guarda cifrado" required />
+          </div>
+        </div>
+        <div style="margin-top: 16px;">
+          <button type="submit">Guardar cuenta</button>
+        </div>
+      </form>
+      <p class="muted" style="font-size:12px; margin-top:14px;">
+        Después de guardar, dale clic a <strong>Conectar</strong> para autorizar el acceso (vas a ver la pantalla de consentimiento de Zoho).
+      </p>
+    </div>
+  </div>
+</body>
+</html>

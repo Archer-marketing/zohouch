@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Panel · Compradores por producto</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <%- include('partials/nav') %>
+  <div class="container">
+    <h1>Compradores por producto y periodo</h1>
+    <p class="subtitle">Cruza tus cuentas de Zoho Books, filtra por producto y fecha, y exporta un CSV sin duplicados para importar en Kommo.</p>
+
+    <% if (accounts.length === 0) { %>
+      <div class="card">
+        <p>Todavía no tienes ninguna cuenta de Zoho Books conectada.</p>
+        <a href="/accounts"><button type="button">Ir a conectar cuentas</button></a>
+      </div>
+    <% } else { %>
+
+    <div class="card">
+      <div class="grid">
+        <div>
+          <label>Cuentas de Zoho Books</label>
+          <div class="checkbox-list" id="accountsList">
+            <% accounts.forEach(function(acc) { %>
+              <label>
+                <input type="checkbox" class="acc-check" value="<%= acc.id %>" <%= acc.hasRefreshToken ? 'checked' : 'disabled' %> />
+                <%= acc.name %> <% if (!acc.hasRefreshToken) { %><span class="badge warn">sin conectar</span><% } %>
+              </label>
+            <% }); %>
+          </div>
+        </div>
+        <div>
+          <label>Tipo de documento</label>
+          <select id="docType">
+            <option value="invoices">Facturas (Invoices)</option>
+            <option value="salesorders">Pedidos de venta (Sales Orders)</option>
+          </select>
+        </div>
+        <div>
+          <label>Desde</label>
+          <input type="date" id="dateFrom" />
+        </div>
+        <div>
+          <label>Hasta</label>
+          <input type="date" id="dateTo" />
+        </div>
+      </div>
+
+      <div style="margin-top:14px;">
+        <label>Producto(s) — deja vacío para incluir todos</label>
+        <select id="productIds" multiple></select>
+        <p class="muted" style="font-size:12px;">Se cargan al elegir cuentas arriba. Puedes seleccionar varios con Ctrl/Cmd + clic.</p>
+      </div>
+
+      <div style="margin-top:16px; display:flex; gap:10px; align-items:center;">
+        <button id="btnSync" type="button">Buscar / Actualizar</button>
+        <button id="btnCsv" type="button" class="secondary" disabled>Descargar CSV para Kommo</button>
+        <span id="spinner">Consultando Zoho Books…</span>
+      </div>
+
+      <div id="statsBox" class="stats"></div>
+      <div id="errorsBox"></div>
+    </div>
+
+    <div class="card">
+      <table id="resultsTable">
+        <thead>
+          <tr>
+            <th>Nombre</th>
+            <th>Teléfono</th>
+            <th>Email</th>
+            <th>Empresa</th>
+            <th>Productos</th>
+            <th># Compras</th>
+            <th>Última compra</th>
+            <th>Cuenta</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p class="muted" id="emptyState">Corre una búsqueda para ver resultados aquí.</p>
+    </div>
+
+    <% } %>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

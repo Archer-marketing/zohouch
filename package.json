@@ -1,0 +1,21 @@
+{
+  "name": "zoho-kommo-panel",
+  "version": "1.0.0",
+  "description": "Panel para cruzar compradores de Zoho Books (uno o varios organizaciones) por producto y periodo, deduplicar telefonos y exportar CSV listo para importar en Kommo.",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "hash-password": "node scripts/hash-password.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "ejs": "^3.1.10",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
