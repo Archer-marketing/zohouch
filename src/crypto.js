@@ -10,7 +10,7 @@ const crypto = require("crypto");
 const ALGO = "aes-256-gcm";
 
 function getKey() {
-  const raw = process.env.MASTER_KEY;
+  const raw = (process.env.MASTER_KEY || "").trim();
   if (!raw || raw.length < 32) {
     throw new Error(
       "MASTER_KEY no esta configurada (o es muy corta). Genera una con: " +

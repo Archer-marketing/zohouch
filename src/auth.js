@@ -27,8 +27,11 @@ function requireLogin(req, res, next) {
 
 function login(req, res) {
   const { username, password } = req.body;
-  const adminUser = process.env.ADMIN_USER || "";
-  const adminHash = process.env.ADMIN_PASSWORD_HASH || "";
+  // .trim(): paneles como EasyPanel suelen agregar un salto de linea o espacio
+  // de mas al pegar valores largos en el campo de variables de entorno, lo
+  // que rompe la comparacion sin que se note a simple vista.
+  const adminUser = (process.env.ADMIN_USER || "").trim();
+  const adminHash = (process.env.ADMIN_PASSWORD_HASH || "").trim();
 
   if (!adminUser || !adminHash) {
     return res.render("login", {
@@ -37,7 +40,7 @@ function login(req, res) {
     });
   }
 
-  if (username === adminUser && verifyPassword(password || "", adminHash)) {
+  if ((username || "").trim() === adminUser && verifyPassword(password || "", adminHash)) {
     req.session.loggedIn = true;
     req.session.username = username;
     return res.redirect("/dashboard");
