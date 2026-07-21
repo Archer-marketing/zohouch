@@ -134,7 +134,9 @@ async function listDocumentsByDateRange(account, { docType, dateFrom, dateTo }) 
   while (hasMore) {
     const json = await authedFetch(account, cfg.listPath, {
       query: {
-        filter_by: "Date.CustomDate",
+        // date_start/date_end son filtros genericos por campo de Zoho Books y
+        // no requieren "filter_by" (que ademas tira "Invalid value passed for
+        // filter_by" en algunas cuentas/ediciones si se manda igual).
         date_start: dateFrom,
         date_end: dateTo,
         page,
