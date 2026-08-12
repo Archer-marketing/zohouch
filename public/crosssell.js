@@ -3,6 +3,8 @@
   const docTypeSelect = document.getElementById("csDocType");
   const dateFrom = document.getElementById("csDateFrom");
   const dateTo = document.getElementById("csDateTo");
+  const recDateFrom = document.getElementById("csRecDateFrom");
+  const recDateTo = document.getElementById("csRecDateTo");
   const customerIdInput = document.getElementById("csCustomerId");
   const btn = document.getElementById("csBtn");
   const spinner = document.getElementById("csSpinner");
@@ -23,11 +25,15 @@
     return d.toISOString().slice(0, 10);
   }
 
-  // Por defecto, 90 dias hacia atras: suficiente historial para detectar
-  // clientes similares sin tardar demasiado. Rangos mas largos = mas
-  // documentos = mas lento (ver throttle de Zoho en src/zoho.js).
+  // Compras del cliente: 90 dias hacia atras por defecto.
   dateFrom.value = todayISO(-90);
   dateTo.value = todayISO(0);
+
+  // Recomendaciones: ventana mas corta (30 dias) por defecto, para que sean
+  // sobre lo que se esta vendiendo ahora y no todo el historial. Ademas de
+  // mas relevante, es mas rapido (menos documentos que revisar).
+  recDateFrom.value = todayISO(-30);
+  recDateTo.value = todayISO(0);
 
   function escapeHtml(str) {
     if (str === null || str === undefined) return "";
@@ -44,7 +50,7 @@
     }
     statsBox.innerHTML = `
       <span>Documentos revisados: <strong>${stats.docsScanned}</strong></span>
-      <span>Clientes en el rango: <strong>${stats.customersInRange}</strong></span>
+      <span>Clientes en el rango de recomendaciones: <strong>${stats.customersInRecRange}</strong></span>
       ${found ? `<span>Clientes similares: <strong>${stats.similarCustomers}</strong></span>` : ""}
     `;
     errorsBox.innerHTML = (stats.errors || [])
@@ -92,6 +98,8 @@
           docType: docTypeSelect.value,
           dateFrom: dateFrom.value,
           dateTo: dateTo.value,
+          recDateFrom: recDateFrom.value,
+          recDateTo: recDateTo.value,
           customerId,
         }),
       });

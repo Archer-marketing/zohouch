@@ -68,10 +68,10 @@ router.post("/api/sync", async (req, res) => {
 });
 
 router.post("/api/crosssell", async (req, res) => {
-  const { accountId, docType, dateFrom, dateTo, customerId } = req.body;
+  const { accountId, docType, dateFrom, dateTo, recDateFrom, recDateTo, customerId } = req.body;
 
   if (!accountId) return res.status(400).json({ error: "Selecciona una cuenta de Zoho Books." });
-  if (!dateFrom || !dateTo) return res.status(400).json({ error: "Falta el rango de fechas." });
+  if (!dateFrom || !dateTo) return res.status(400).json({ error: "Falta el rango de fechas del cliente." });
   if (!customerId || !String(customerId).trim()) {
     return res.status(400).json({ error: "Falta el Customer ID de Zoho." });
   }
@@ -82,6 +82,9 @@ router.post("/api/crosssell", async (req, res) => {
       docType: docType || "invoices",
       dateFrom,
       dateTo,
+      // Si no mandan un rango de recomendaciones aparte, usa el mismo del cliente.
+      recDateFrom: recDateFrom || dateFrom,
+      recDateTo: recDateTo || dateTo,
       customerId: String(customerId).trim(),
     });
     res.json(result);

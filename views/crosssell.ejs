@@ -38,14 +38,31 @@
           </select>
         </div>
         <div>
-          <label>Desde</label>
+          <label>Desde (compras del cliente)</label>
           <input type="date" id="csDateFrom" />
         </div>
         <div>
-          <label>Hasta</label>
+          <label>Hasta (compras del cliente)</label>
           <input type="date" id="csDateTo" />
         </div>
       </div>
+
+      <div class="grid" style="margin-top:14px;">
+        <div>
+          <label>Desde (recomendaciones)</label>
+          <input type="date" id="csRecDateFrom" />
+        </div>
+        <div>
+          <label>Hasta (recomendaciones)</label>
+          <input type="date" id="csRecDateTo" />
+        </div>
+      </div>
+      <p class="muted" style="font-size:12px; margin-top:4px;">
+        El rango de "compras del cliente" define qué le mostramos que compró. El rango de
+        "recomendaciones" define en qué ventana miramos qué compraron otros clientes similares
+        (por defecto, últimos 30 días, para que las sugerencias sean sobre lo que se está
+        vendiendo ahora, no todo el historial).
+      </p>
 
       <div style="margin-top:14px;">
         <label>Customer ID de Zoho</label>

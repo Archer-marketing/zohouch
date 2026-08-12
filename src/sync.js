@@ -182,18 +182,9 @@ async function runSync({ accountIds, dateFrom, dateTo, productIds, docType = "in
   return { rows, stats };
 }
 
-// Venta cruzada para un cliente puntual: que compro, y que compran otros
-// clientes de la misma cuenta que comparten al menos un producto con el
-// (candidatos a recomendar, excluyendo lo que el cliente ya tiene).
-const MAX_RECOMMENDATIONS = 10;
-
-async function computeCrossSell({ accountId, docType = "invoices", dateFrom, dateTo, customerId }) {
-  const account = db.getAccount(accountId, { includeSecrets: true });
-  if (!account) throw new Error("Cuenta no encontrada.");
-
-  const { details, docsScanned, errors } = await fetchAccountDocDetails(account, docType, dateFrom, dateTo);
-
-  // contactId -> { name, docCount, items: Map<itemId, {itemId, name, sku, quantity}> }
+// Agrupa una lista de detalles de documentos por contacto:
+// contactId -> { name, docCount, items: Map<itemId, {itemId, name, sku, quantity}> }
+function groupByContact(details) {
   const byContact = new Map();
   for (const detail of details) {
     if (!detail.contactId) continue;
@@ -213,25 +204,70 @@ async function computeCrossSell({ accountId, docType = "invoices", dateFrom, dat
       }
     }
   }
+  return byContact;
+}
 
-  const target = byContact.get(customerId);
-  if (!target) {
+// Venta cruzada para un cliente puntual: que compro (en el rango del
+// cliente), y que compran otros clientes de la misma cuenta que comparten
+// al menos un producto con el (candidatos a recomendar, buscados en su
+// propio rango de fechas -- puede ser mas corto, ej. "ultimos 30 dias",
+// para que las sugerencias reflejen lo que se esta comprando ahora y no
+// todo el historial).
+const MAX_RECOMMENDATIONS = 10;
+
+async function computeCrossSell({
+  accountId,
+  docType = "invoices",
+  dateFrom,
+  dateTo,
+  recDateFrom,
+  recDateTo,
+  customerId,
+}) {
+  const account = db.getAccount(accountId, { includeSecrets: true });
+  if (!account) throw new Error("Cuenta no encontrada.");
+
+  const { details: targetDetails, docsScanned: targetDocsScanned, errors: targetErrors } =
+    await fetchAccountDocDetails(account, docType, dateFrom, dateTo);
+
+  const targetEntry = groupByContact(targetDetails).get(customerId);
+
+  const sameRange = recDateFrom === dateFrom && recDateTo === dateTo;
+  let recDetails, recDocsScanned, recErrors;
+  if (sameRange) {
+    recDetails = targetDetails;
+    recDocsScanned = targetDocsScanned;
+    recErrors = targetErrors;
+  } else {
+    ({ details: recDetails, docsScanned: recDocsScanned, errors: recErrors } = await fetchAccountDocDetails(
+      account,
+      docType,
+      recDateFrom,
+      recDateTo
+    ));
+  }
+  const byContactRec = groupByContact(recDetails);
+
+  const errors = sameRange ? targetErrors : [...targetErrors, ...recErrors];
+  const docsScanned = sameRange ? targetDocsScanned : targetDocsScanned + recDocsScanned;
+
+  if (!targetEntry) {
     return {
       found: false,
       customer: null,
       purchases: [],
       recommendations: [],
-      stats: { docsScanned, customersInRange: byContact.size, errors },
+      stats: { docsScanned, customersInRecRange: byContactRec.size, errors },
     };
   }
 
-  const targetItemIds = new Set(target.items.keys());
-  const purchases = [...target.items.values()].sort((a, b) => b.quantity - a.quantity);
+  const targetItemIds = new Set(targetEntry.items.keys());
+  const purchases = [...targetEntry.items.values()].sort((a, b) => b.quantity - a.quantity);
 
   const recCounts = new Map(); // itemId -> { itemId, name, sku, coBuyers, totalQuantity }
   let similarCustomers = 0;
 
-  for (const [contactId, entry] of byContact) {
+  for (const [contactId, entry] of byContactRec) {
     if (contactId === customerId) continue;
     const sharesProduct = [...entry.items.keys()].some((id) => targetItemIds.has(id));
     if (!sharesProduct) continue;
@@ -257,10 +293,10 @@ async function computeCrossSell({ accountId, docType = "invoices", dateFrom, dat
 
   return {
     found: true,
-    customer: { id: customerId, name: target.name, docCount: target.docCount },
+    customer: { id: customerId, name: targetEntry.name, docCount: targetEntry.docCount },
     purchases,
     recommendations,
-    stats: { docsScanned, customersInRange: byContact.size, similarCustomers, errors },
+    stats: { docsScanned, customersInRecRange: byContactRec.size, similarCustomers, errors },
   };
 }
 
