@@ -9,76 +9,174 @@
   <%- include('partials/nav') %>
   <div class="container">
     <h1>Venta cruzada por cliente</h1>
-    <p class="subtitle">Pega el Customer ID de Zoho Books de un cliente: te muestra qué y cuánto compró, y productos recomendados según lo que compraron otros clientes que compraron algo en común con él.</p>
-
-    <% if (accounts.length === 0) { %>
-      <div class="card">
-        <p>Todavía no tienes ninguna cuenta de Zoho Books conectada.</p>
-        <a href="/accounts"><button type="button">Ir a conectar cuentas</button></a>
-      </div>
-    <% } else { %>
+    <p class="subtitle">Elegí un cliente: te muestra qué y cuánto compró, y productos recomendados según lo que compraron otros clientes que compraron algo en común con él.</p>
 
     <div class="card">
-      <div class="grid">
-        <div>
-          <label>Cuenta de Zoho Books</label>
-          <select id="csAccount">
-            <% accounts.forEach(function(acc) { %>
-              <option value="<%= acc.id %>" <%= !acc.hasRefreshToken ? 'disabled' : '' %>>
-                <%= acc.name %><%= !acc.hasRefreshToken ? ' (sin conectar)' : '' %>
-              </option>
-            <% }); %>
-          </select>
-        </div>
-        <div>
-          <label>Tipo de documento</label>
-          <select id="csDocType">
-            <option value="invoices">Facturas (Invoices)</option>
-            <option value="salesorders">Pedidos de venta (Sales Orders)</option>
-          </select>
-        </div>
-        <div>
-          <label>Desde (compras del cliente)</label>
-          <input type="date" id="csDateFrom" />
-        </div>
-        <div>
-          <label>Hasta (compras del cliente)</label>
-          <input type="date" id="csDateTo" />
-        </div>
+      <label>Fuente de datos</label>
+      <div style="display:flex; gap:18px; margin-top:6px;">
+        <label style="display:flex; align-items:center; gap:6px; font-size:14px; color:var(--text);">
+          <input type="radio" name="csMode" value="live" id="csModeLive" checked style="width:auto;" />
+          Zoho en vivo (usa la API)
+        </label>
+        <label style="display:flex; align-items:center; gap:6px; font-size:14px; color:var(--text);">
+          <input type="radio" name="csMode" value="csv" id="csModeCsv" style="width:auto;" />
+          Subir CSV exportado (cero llamadas a la API)
+        </label>
       </div>
-
-      <div class="grid" style="margin-top:14px;">
-        <div>
-          <label>Desde (recomendaciones)</label>
-          <input type="date" id="csRecDateFrom" />
-        </div>
-        <div>
-          <label>Hasta (recomendaciones)</label>
-          <input type="date" id="csRecDateTo" />
-        </div>
-      </div>
-      <p class="muted" style="font-size:12px; margin-top:4px;">
-        El rango de "compras del cliente" define qué le mostramos que compró. El rango de
-        "recomendaciones" define en qué ventana miramos qué compraron otros clientes similares
-        (por defecto, últimos 30 días, para que las sugerencias sean sobre lo que se está
-        vendiendo ahora, no todo el historial).
-      </p>
-
-      <div style="margin-top:14px;">
-        <label>Customer ID de Zoho</label>
-        <input type="text" id="csCustomerId" placeholder="Ej: 460000000123456" />
-        <p class="muted" style="font-size:12px;">Lo encontrás en Zoho Books, dentro de la ficha del contacto (en la URL o en el detalle del cliente).</p>
-      </div>
-
-      <div style="margin-top:16px; display:flex; gap:10px; align-items:center;">
-        <button id="csBtn" type="button">Buscar</button>
-        <span id="csSpinner">Consultando Zoho Books…</span>
-      </div>
-
-      <div id="csStats" class="stats"></div>
-      <div id="csErrors"></div>
     </div>
 
+    <!-- ================= MODO EN VIVO (Zoho API) ================= -->
+    <div id="csLivePanel">
+      <% if (accounts.length === 0) { %>
+        <div class="card">
+          <p>Todavía no tienes ninguna cuenta de Zoho Books conectada.</p>
+          <a href="/accounts"><button type="button">Ir a conectar cuentas</button></a>
+        </div>
+      <% } else { %>
+      <div class="card">
+        <div class="grid">
+          <div>
+            <label>Cuenta de Zoho Books</label>
+            <select id="csAccount">
+              <% accounts.forEach(function(acc) { %>
+                <option value="<%= acc.id %>" <%= !acc.hasRefreshToken ? 'disabled' : '' %>>
+                  <%= acc.name %><%= !acc.hasRefreshToken ? ' (sin conectar)' : '' %>
+                </option>
+              <% }); %>
+            </select>
+          </div>
+          <div>
+            <label>Tipo de documento</label>
+            <select id="csDocType">
+              <option value="invoices">Facturas (Invoices)</option>
+              <option value="salesorders">Pedidos de venta (Sales Orders)</option>
+            </select>
+          </div>
+          <div>
+            <label>Desde (compras del cliente)</label>
+            <input type="date" id="csDateFrom" />
+          </div>
+          <div>
+            <label>Hasta (compras del cliente)</label>
+            <input type="date" id="csDateTo" />
+          </div>
+        </div>
+
+        <div class="grid" style="margin-top:14px;">
+          <div>
+            <label>Desde (recomendaciones)</label>
+            <input type="date" id="csRecDateFrom" />
+          </div>
+          <div>
+            <label>Hasta (recomendaciones)</label>
+            <input type="date" id="csRecDateTo" />
+          </div>
+        </div>
+        <p class="muted" style="font-size:12px; margin-top:4px;">
+          El rango de "compras del cliente" define qué le mostramos que compró. El rango de
+          "recomendaciones" define en qué ventana miramos qué compraron otros clientes similares
+          (por defecto, últimos 30 días).
+        </p>
+
+        <div style="margin-top:14px;">
+          <label>Customer ID de Zoho</label>
+          <input type="text" id="csCustomerId" placeholder="Ej: 460000000123456" />
+          <p class="muted" style="font-size:12px;">Lo encontrás en Zoho Books, dentro de la ficha del contacto (en la URL o en el detalle del cliente).</p>
+        </div>
+
+        <div style="margin-top:16px; display:flex; gap:10px; align-items:center;">
+          <button id="csBtn" type="button">Buscar</button>
+          <span id="csSpinner">Consultando Zoho Books…</span>
+        </div>
+
+        <div id="csStats" class="stats"></div>
+        <div id="csErrors"></div>
+      </div>
+      <% } %>
+    </div>
+
+    <!-- ================= MODO CSV (sin API) ================= -->
+    <div id="csCsvPanel" style="display:none;">
+      <div class="card">
+        <p class="muted" style="margin-top:0;">
+          En Zoho Books, exportá tus facturas o pedidos con detalle de producto a CSV/Excel
+          (por ejemplo desde Reportes → Ventas por producto, o el listado de facturas) y subí
+          ese archivo acá. No se manda nada a Zoho: todo el análisis corre localmente con el
+          archivo que subiste.
+        </p>
+        <label>Archivo CSV</label>
+        <input type="file" id="csvFile" accept=".csv,text/csv" />
+        <div id="csvFileStatus" class="muted" style="font-size:12px; margin-top:6px;"></div>
+      </div>
+
+      <div class="card" id="csvMappingCard" style="display:none;">
+        <h3 style="margin-top:0;">¿Qué columna es cada cosa?</h3>
+        <div class="grid">
+          <div>
+            <label>Columna de cliente (nombre)</label>
+            <select id="csvColCustomer"></select>
+          </div>
+          <div>
+            <label>Columna de producto (nombre)</label>
+            <select id="csvColItem"></select>
+          </div>
+          <div>
+            <label>Columna de SKU (opcional)</label>
+            <select id="csvColSku">
+              <option value="">— Ninguna —</option>
+            </select>
+          </div>
+          <div>
+            <label>Columna de cantidad</label>
+            <select id="csvColQuantity"></select>
+          </div>
+          <div>
+            <label>Columna de fecha</label>
+            <select id="csvColDate"></select>
+          </div>
+        </div>
+        <div style="margin-top:14px;">
+          <button id="csvLoadCustomersBtn" type="button" class="secondary">Cargar lista de clientes</button>
+          <span id="csvMappingStatus" class="muted" style="font-size:12px; margin-left:8px;"></span>
+        </div>
+      </div>
+
+      <div class="card" id="csvRunCard" style="display:none;">
+        <div class="grid">
+          <div>
+            <label>Cliente</label>
+            <input list="csvCustomerList" id="csvCustomerInput" placeholder="Empezá a escribir el nombre…" />
+            <datalist id="csvCustomerList"></datalist>
+          </div>
+          <div>
+            <label>Desde (compras del cliente)</label>
+            <input type="date" id="csvDateFrom" />
+          </div>
+          <div>
+            <label>Hasta (compras del cliente)</label>
+            <input type="date" id="csvDateTo" />
+          </div>
+        </div>
+        <div class="grid" style="margin-top:14px;">
+          <div>
+            <label>Desde (recomendaciones)</label>
+            <input type="date" id="csvRecDateFrom" />
+          </div>
+          <div>
+            <label>Hasta (recomendaciones)</label>
+            <input type="date" id="csvRecDateTo" />
+          </div>
+        </div>
+        <div style="margin-top:16px; display:flex; gap:10px; align-items:center;">
+          <button id="csvBtn" type="button">Analizar</button>
+          <span id="csvSpinner" style="display:none; color:var(--muted);">Analizando…</span>
+        </div>
+        <div id="csvStats" class="stats"></div>
+        <div id="csvErrors"></div>
+      </div>
+    </div>
+
+    <!-- ================= RESULTADOS (compartidos por los dos modos) ================= -->
     <div class="card" id="csCustomerCard" style="display:none;">
       <h2 id="csCustomerName" style="margin-top:0;"></h2>
       <table id="csPurchasesTable">
@@ -96,9 +194,7 @@
       </table>
     </div>
 
-    <p class="muted" id="csEmptyState">Completa los filtros y el Customer ID, y dale "Buscar".</p>
-
-    <% } %>
+    <p class="muted" id="csEmptyState">Completa los filtros y elegí un cliente para analizar.</p>
   </div>
 
   <script src="/crosssell.js"></script>

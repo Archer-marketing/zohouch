@@ -13,6 +13,7 @@
 
 const zoho = require("./zoho");
 const db = require("./db");
+const { normalizeDate } = require("./csvImport");
 
 async function asyncPool(concurrency, items, iteratorFn) {
   const results = [];
@@ -217,57 +218,15 @@ function groupByContact(details) {
 // propio rango de fechas -- puede ser mas corto, ej. "ultimos 30 dias",
 // para que las sugerencias reflejen lo que se esta comprando ahora y no
 // todo el historial).
+//
+// Logica pura, compartida entre el modo "en vivo" (Zoho API, computeCrossSell)
+// y el modo CSV (crossSellFromCsvRows) -- ambos arman "details" con la misma
+// forma ({contactId, contactName, date, lineItems}) y llegan aca.
 const MAX_RECOMMENDATIONS = 10;
 
-async function computeCrossSell({
-  accountId,
-  docType = "invoices",
-  dateFrom,
-  dateTo,
-  recDateFrom,
-  recDateTo,
-  customerId,
-  onStatus,
-}) {
-  const account = db.getAccount(accountId, { includeSecrets: true });
-  if (!account) throw new Error("Cuenta no encontrada.");
-
-  if (onStatus) onStatus("Trayendo compras del cliente…");
-  const { details: targetDetails, docsScanned: targetDocsScanned, errors: targetErrors } =
-    await fetchAccountDocDetails(account, docType, dateFrom, dateTo, onStatus);
-
+function computeCrossSellFromDetails({ targetDetails, recDetails, customerId, docsScanned, errors }) {
   const targetEntry = groupByContact(targetDetails).get(customerId);
-
-  const sameRange = recDateFrom === dateFrom && recDateTo === dateTo;
-  // Fechas vienen como "YYYY-MM-DD", comparan bien como strings.
-  const recContainedInTarget = recDateFrom >= dateFrom && recDateTo <= dateTo;
-
-  let recDetails, recDocsScanned, recErrors;
-  if (sameRange) {
-    recDetails = targetDetails;
-    recDocsScanned = targetDocsScanned;
-    recErrors = targetErrors;
-  } else if (recContainedInTarget) {
-    // El rango de recomendaciones esta adentro del rango del cliente: ya
-    // tenemos esos documentos en targetDetails, no hace falta volver a
-    // pedirle a Zoho el mismo listado + detalle de vuelta.
-    recDetails = targetDetails.filter((d) => d.date >= recDateFrom && d.date <= recDateTo);
-    recDocsScanned = 0;
-    recErrors = [];
-  } else {
-    if (onStatus) onStatus("Trayendo compras de otros clientes para las recomendaciones…");
-    ({ details: recDetails, docsScanned: recDocsScanned, errors: recErrors } = await fetchAccountDocDetails(
-      account,
-      docType,
-      recDateFrom,
-      recDateTo,
-      onStatus
-    ));
-  }
   const byContactRec = groupByContact(recDetails);
-
-  const errors = sameRange ? targetErrors : [...targetErrors, ...recErrors];
-  const docsScanned = sameRange ? targetDocsScanned : targetDocsScanned + recDocsScanned;
 
   if (!targetEntry) {
     return {
@@ -318,4 +277,119 @@ async function computeCrossSell({
   };
 }
 
-module.exports = { runSync, computeCrossSell, normalizePhone };
+async function computeCrossSell({
+  accountId,
+  docType = "invoices",
+  dateFrom,
+  dateTo,
+  recDateFrom,
+  recDateTo,
+  customerId,
+  onStatus,
+}) {
+  const account = db.getAccount(accountId, { includeSecrets: true });
+  if (!account) throw new Error("Cuenta no encontrada.");
+
+  if (onStatus) onStatus("Trayendo compras del cliente…");
+  const { details: targetDetails, docsScanned: targetDocsScanned, errors: targetErrors } =
+    await fetchAccountDocDetails(account, docType, dateFrom, dateTo, onStatus);
+
+  const sameRange = recDateFrom === dateFrom && recDateTo === dateTo;
+  // Fechas vienen como "YYYY-MM-DD", comparan bien como strings.
+  const recContainedInTarget = recDateFrom >= dateFrom && recDateTo <= dateTo;
+
+  let recDetails, recDocsScanned, recErrors;
+  if (sameRange) {
+    recDetails = targetDetails;
+    recDocsScanned = targetDocsScanned;
+    recErrors = targetErrors;
+  } else if (recContainedInTarget) {
+    // El rango de recomendaciones esta adentro del rango del cliente: ya
+    // tenemos esos documentos en targetDetails, no hace falta volver a
+    // pedirle a Zoho el mismo listado + detalle de vuelta.
+    recDetails = targetDetails.filter((d) => d.date >= recDateFrom && d.date <= recDateTo);
+    recDocsScanned = 0;
+    recErrors = [];
+  } else {
+    if (onStatus) onStatus("Trayendo compras de otros clientes para las recomendaciones…");
+    ({ details: recDetails, docsScanned: recDocsScanned, errors: recErrors } = await fetchAccountDocDetails(
+      account,
+      docType,
+      recDateFrom,
+      recDateTo,
+      onStatus
+    ));
+  }
+
+  const errors = sameRange ? targetErrors : [...targetErrors, ...recErrors];
+  const docsScanned = sameRange ? targetDocsScanned : targetDocsScanned + recDocsScanned;
+
+  return computeCrossSellFromDetails({ targetDetails, recDetails, customerId, docsScanned, errors });
+}
+
+// ---------- Venta cruzada desde un CSV exportado a mano (cero llamadas a la
+// API de Zoho) ----------
+// mapping: { customer, item, sku (opcional), quantity, date } -> nombres de
+// columna del CSV subido. No hay Customer ID en un export manual, asi que
+// identificamos clientes por nombre (tal como viene en la columna elegida).
+
+function csvRowsToDetails(rows, mapping) {
+  const details = [];
+  for (const row of rows) {
+    const customerName = (row[mapping.customer] || "").trim();
+    const itemName = (row[mapping.item] || "").trim();
+    if (!customerName || !itemName) continue;
+    const sku = mapping.sku ? (row[mapping.sku] || "").trim() : "";
+    const quantity = Number((row[mapping.quantity] || "").replace(/,/g, "")) || 0;
+    const date = normalizeDate(row[mapping.date]);
+    // Preferimos el SKU como clave del producto (mas estable que el nombre);
+    // si no hay SKU, usamos el nombre.
+    const itemId = sku || itemName;
+    details.push({
+      contactId: customerName,
+      contactName: customerName,
+      date,
+      lineItems: [{ itemId, name: itemName, sku, quantity }],
+    });
+  }
+  return details;
+}
+
+function distinctCsvCustomers(rows, mapping) {
+  const names = new Set();
+  for (const row of rows) {
+    const name = (row[mapping.customer] || "").trim();
+    if (name) names.add(name);
+  }
+  return [...names].sort((a, b) => a.localeCompare(b, "es"));
+}
+
+function crossSellFromCsvRows({ rows, mapping, customerName, dateFrom, dateTo, recDateFrom, recDateTo }) {
+  const allDetails = csvRowsToDetails(rows, mapping);
+  const withDates = allDetails.filter((d) => d.date);
+  const invalidDateCount = allDetails.length - withDates.length;
+
+  const targetDetails = withDates.filter((d) => d.date >= dateFrom && d.date <= dateTo);
+  const recDetails = withDates.filter((d) => d.date >= recDateFrom && d.date <= recDateTo);
+
+  const errors = [];
+  if (invalidDateCount > 0) {
+    errors.push(`${invalidDateCount} fila(s) del CSV tenian una fecha que no se pudo interpretar y se ignoraron.`);
+  }
+
+  return computeCrossSellFromDetails({
+    targetDetails,
+    recDetails,
+    customerId: customerName,
+    docsScanned: withDates.length,
+    errors,
+  });
+}
+
+module.exports = {
+  runSync,
+  computeCrossSell,
+  normalizePhone,
+  distinctCsvCustomers,
+  crossSellFromCsvRows,
+};

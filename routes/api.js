@@ -2,8 +2,9 @@ const express = require("express");
 const crypto = require("crypto");
 const db = require("../src/db");
 const zoho = require("../src/zoho");
-const { runSync, computeCrossSell } = require("../src/sync");
+const { runSync, computeCrossSell, distinctCsvCustomers, crossSellFromCsvRows } = require("../src/sync");
 const { rowsToCsv } = require("../src/csv");
+const { parseCsv } = require("../src/csvImport");
 const runStore = require("../src/runStore");
 const progressStore = require("../src/progressStore");
 
@@ -108,6 +109,67 @@ router.get("/api/crosssell/status/:jobId", (req, res) => {
   const job = progressStore.get(req.params.jobId);
   if (!job) return res.status(404).json({ error: "Ese trabajo ya no existe (expiro o el servidor se reinicio)." });
   res.json(job);
+});
+
+// ---------- Venta cruzada desde CSV (sin usar la API de Zoho) ----------
+// El frontend lee el archivo con FileReader y manda el texto crudo en el
+// body (no hace falta multer/upload real, es un simple string en el JSON).
+
+router.post("/api/crosssell/csv-preview", (req, res) => {
+  const { csvText } = req.body;
+  if (!csvText || !csvText.trim()) {
+    return res.status(400).json({ error: "El archivo esta vacio o no se pudo leer." });
+  }
+  try {
+    const { headers, rows } = parseCsv(csvText);
+    if (headers.length === 0) {
+      return res.status(400).json({ error: "No se encontraron columnas en el CSV." });
+    }
+    res.json({ headers, sampleRows: rows.slice(0, 5), rowCount: rows.length });
+  } catch (err) {
+    res.status(400).json({ error: `No se pudo leer el CSV: ${err.message}` });
+  }
+});
+
+router.post("/api/crosssell/csv-customers", (req, res) => {
+  const { csvText, mapping } = req.body;
+  if (!csvText || !mapping || !mapping.customer) {
+    return res.status(400).json({ error: "Falta el CSV o el mapeo de columnas." });
+  }
+  try {
+    const { rows } = parseCsv(csvText);
+    const customers = distinctCsvCustomers(rows, mapping);
+    res.json({ customers });
+  } catch (err) {
+    res.status(400).json({ error: `No se pudo leer el CSV: ${err.message}` });
+  }
+});
+
+router.post("/api/crosssell/csv", (req, res) => {
+  const { csvText, mapping, customerName, dateFrom, dateTo, recDateFrom, recDateTo } = req.body;
+
+  if (!csvText || !mapping || !mapping.customer || !mapping.item || !mapping.quantity || !mapping.date) {
+    return res.status(400).json({ error: "Falta el CSV o completar el mapeo de columnas (cliente, producto, cantidad, fecha)." });
+  }
+  if (!dateFrom || !dateTo) return res.status(400).json({ error: "Falta el rango de fechas del cliente." });
+  if (!customerName || !customerName.trim()) return res.status(400).json({ error: "Falta elegir un cliente." });
+
+  try {
+    const { rows } = parseCsv(csvText);
+    const result = crossSellFromCsvRows({
+      rows,
+      mapping,
+      customerName: customerName.trim(),
+      dateFrom,
+      dateTo,
+      recDateFrom: recDateFrom || dateFrom,
+      recDateTo: recDateTo || dateTo,
+    });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.get("/api/export/:runId.csv", (req, res) => {

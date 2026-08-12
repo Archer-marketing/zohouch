@@ -16,7 +16,9 @@ app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "..", "views"));
 
 app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+// Limite mas alto que el default (100kb) para poder mandar el contenido de
+// un CSV exportado de Zoho Books (venta cruzada sin usar la API) en el body.
+app.use(express.json({ limit: "25mb" }));
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 const sessionStore = new FileStore({ dataDir: db.DATA_DIR });
