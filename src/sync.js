@@ -51,6 +51,34 @@ async function getDetailWithCache(account, docType, doc, cache) {
   return detail;
 }
 
+// Trae el detalle (line items) de todos los documentos de una cuenta en un
+// rango de fechas, usando el cache en disco para no re-pedir los que no
+// cambiaron desde la ultima vez. Compartido entre runSync y computeCrossSell.
+async function fetchAccountDocDetails(account, docType, dateFrom, dateTo) {
+  const docs = await zoho.listDocumentsByDateRange(account, { docType, dateFrom, dateTo });
+  const cache = db.getAccountCache(account.id, docType);
+  const results = await asyncPool(5, docs, (doc) => getDetailWithCache(account, docType, doc, cache));
+
+  const cacheUpdates = {};
+  const details = [];
+  const errors = [];
+  for (const detail of results) {
+    if (!detail || detail.__error) {
+      if (detail) errors.push(detail.__error);
+      continue;
+    }
+    cacheUpdates[detail.id] = {
+      lastModifiedTime: detail.lastModifiedTime,
+      contactId: detail.contactId,
+      lineItems: detail.lineItems,
+      date: detail.date,
+    };
+    details.push(detail);
+  }
+  db.saveAccountCacheEntries(account.id, docType, cacheUpdates);
+  return { details, docsScanned: docs.length, errors };
+}
+
 async function runSync({ accountIds, dateFrom, dateTo, productIds, docType = "invoices" }, { onProgress } = {}) {
   const productIdSet = new Set((productIds || []).filter(Boolean));
   const allAccounts = db.listAccounts({ includeSecrets: true });
@@ -61,43 +89,26 @@ async function runSync({ accountIds, dateFrom, dateTo, productIds, docType = "in
 
   for (const account of accounts) {
     if (onProgress) onProgress({ stage: "account_start", account: account.name });
-    let docs;
+    let details, docsScanned, detailErrors;
     try {
-      docs = await zoho.listDocumentsByDateRange(account, { docType, dateFrom, dateTo });
+      ({ details, docsScanned, errors: detailErrors } = await fetchAccountDocDetails(
+        account,
+        docType,
+        dateFrom,
+        dateTo
+      ));
     } catch (err) {
       stats.errors.push(`[${account.name}] listando documentos: ${err.message}`);
       continue;
     }
-    stats.docsScanned += docs.length;
+    stats.docsScanned += docsScanned;
+    detailErrors.forEach((msg) => stats.errors.push(`[${account.name}] detalle doc: ${msg}`));
 
-    const cache = db.getAccountCache(account.id, docType);
-
-    // Trae detalle (line items) de cada doc, con cache y concurrencia limitada.
-    const details = await asyncPool(5, docs, (doc) => getDetailWithCache(account, docType, doc, cache));
-
-    const cacheUpdates = {};
-    const matchedDocs = [];
-
-    for (const detail of details) {
-      if (!detail || detail.__error) {
-        if (detail) stats.errors.push(`[${account.name}] detalle doc: ${detail.__error}`);
-        continue;
-      }
-      cacheUpdates[detail.id] = {
-        lastModifiedTime: detail.lastModifiedTime,
-        contactId: detail.contactId,
-        lineItems: detail.lineItems,
-        date: detail.date,
-      };
-
+    const matchedDocs = details.filter((detail) => {
       const itemIds = (detail.lineItems || []).map((li) => li.itemId);
-      const matches = productIdSet.size === 0 || itemIds.some((id) => productIdSet.has(id));
-      if (matches) {
-        matchedDocs.push(detail);
-      }
-    }
+      return productIdSet.size === 0 || itemIds.some((id) => productIdSet.has(id));
+    });
 
-    db.saveAccountCacheEntries(account.id, docType, cacheUpdates);
     stats.docsMatched += matchedDocs.length;
 
     // Contactos unicos a resolver en esta cuenta
@@ -162,4 +173,86 @@ async function runSync({ accountIds, dateFrom, dateTo, productIds, docType = "in
   return { rows, stats };
 }
 
-module.exports = { runSync, normalizePhone };
+// Venta cruzada para un cliente puntual: que compro, y que compran otros
+// clientes de la misma cuenta que comparten al menos un producto con el
+// (candidatos a recomendar, excluyendo lo que el cliente ya tiene).
+const MAX_RECOMMENDATIONS = 10;
+
+async function computeCrossSell({ accountId, docType = "invoices", dateFrom, dateTo, customerId }) {
+  const account = db.getAccount(accountId, { includeSecrets: true });
+  if (!account) throw new Error("Cuenta no encontrada.");
+
+  const { details, docsScanned, errors } = await fetchAccountDocDetails(account, docType, dateFrom, dateTo);
+
+  // contactId -> { name, docCount, items: Map<itemId, {itemId, name, sku, quantity}> }
+  const byContact = new Map();
+  for (const detail of details) {
+    if (!detail.contactId) continue;
+    if (!byContact.has(detail.contactId)) {
+      byContact.set(detail.contactId, { name: detail.contactName || "", docCount: 0, items: new Map() });
+    }
+    const entry = byContact.get(detail.contactId);
+    if (detail.contactName) entry.name = detail.contactName;
+    entry.docCount += 1;
+    for (const li of detail.lineItems || []) {
+      if (!li.itemId) continue;
+      const existing = entry.items.get(li.itemId);
+      if (existing) {
+        existing.quantity += li.quantity || 0;
+      } else {
+        entry.items.set(li.itemId, { itemId: li.itemId, name: li.name, sku: li.sku, quantity: li.quantity || 0 });
+      }
+    }
+  }
+
+  const target = byContact.get(customerId);
+  if (!target) {
+    return {
+      found: false,
+      customer: null,
+      purchases: [],
+      recommendations: [],
+      stats: { docsScanned, customersInRange: byContact.size, errors },
+    };
+  }
+
+  const targetItemIds = new Set(target.items.keys());
+  const purchases = [...target.items.values()].sort((a, b) => b.quantity - a.quantity);
+
+  const recCounts = new Map(); // itemId -> { itemId, name, sku, coBuyers, totalQuantity }
+  let similarCustomers = 0;
+
+  for (const [contactId, entry] of byContact) {
+    if (contactId === customerId) continue;
+    const sharesProduct = [...entry.items.keys()].some((id) => targetItemIds.has(id));
+    if (!sharesProduct) continue;
+    similarCustomers += 1;
+    for (const item of entry.items.values()) {
+      if (targetItemIds.has(item.itemId)) continue; // el cliente ya lo compro, no hace falta recomendarlo
+      const rec = recCounts.get(item.itemId) || {
+        itemId: item.itemId,
+        name: item.name,
+        sku: item.sku,
+        coBuyers: 0,
+        totalQuantity: 0,
+      };
+      rec.coBuyers += 1;
+      rec.totalQuantity += item.quantity;
+      recCounts.set(item.itemId, rec);
+    }
+  }
+
+  const recommendations = [...recCounts.values()]
+    .sort((a, b) => b.coBuyers - a.coBuyers || b.totalQuantity - a.totalQuantity)
+    .slice(0, MAX_RECOMMENDATIONS);
+
+  return {
+    found: true,
+    customer: { id: customerId, name: target.name, docCount: target.docCount },
+    purchases,
+    recommendations,
+    stats: { docsScanned, customersInRange: byContact.size, similarCustomers, errors },
+  };
+}
+
+module.exports = { runSync, computeCrossSell, normalizePhone };

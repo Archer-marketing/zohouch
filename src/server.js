@@ -53,6 +53,10 @@ app.get("/dashboard", (req, res) => {
   res.render("dashboard", { accounts: db.listAccounts(), username: req.session.username });
 });
 
+app.get("/crosssell", (req, res) => {
+  res.render("crosssell", { accounts: db.listAccounts(), username: req.session.username });
+});
+
 app.use("/", accountsRouter);
 app.use("/", apiRouter);
 
