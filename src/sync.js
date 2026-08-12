@@ -233,11 +233,21 @@ async function computeCrossSell({
   const targetEntry = groupByContact(targetDetails).get(customerId);
 
   const sameRange = recDateFrom === dateFrom && recDateTo === dateTo;
+  // Fechas vienen como "YYYY-MM-DD", comparan bien como strings.
+  const recContainedInTarget = recDateFrom >= dateFrom && recDateTo <= dateTo;
+
   let recDetails, recDocsScanned, recErrors;
   if (sameRange) {
     recDetails = targetDetails;
     recDocsScanned = targetDocsScanned;
     recErrors = targetErrors;
+  } else if (recContainedInTarget) {
+    // El rango de recomendaciones esta adentro del rango del cliente: ya
+    // tenemos esos documentos en targetDetails, no hace falta volver a
+    // pedirle a Zoho el mismo listado + detalle de vuelta.
+    recDetails = targetDetails.filter((d) => d.date >= recDateFrom && d.date <= recDateTo);
+    recDocsScanned = 0;
+    recErrors = [];
   } else {
     ({ details: recDetails, docsScanned: recDocsScanned, errors: recErrors } = await fetchAccountDocDetails(
       account,
