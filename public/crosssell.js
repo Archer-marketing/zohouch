@@ -23,9 +23,10 @@
     return d.toISOString().slice(0, 10);
   }
 
-  // Por defecto, un año hacia atras: para detectar clientes similares hace
-  // falta bastante historial, no solo el ultimo mes.
-  dateFrom.value = todayISO(-365);
+  // Por defecto, 90 dias hacia atras: suficiente historial para detectar
+  // clientes similares sin tardar demasiado. Rangos mas largos = mas
+  // documentos = mas lento (ver throttle de Zoho en src/zoho.js).
+  dateFrom.value = todayISO(-90);
   dateTo.value = todayISO(0);
 
   function escapeHtml(str) {
@@ -71,6 +72,17 @@
     recCard.style.display = "none";
     emptyState.style.display = "none";
 
+    // Contador visible: con rangos grandes puede tardar varios minutos
+    // (Zoho limita a 100 requests/minuto), y sin esto la pantalla parece
+    // colgada aunque siga trabajando.
+    const startedAt = Date.now();
+    function updateSpinnerText() {
+      const secs = Math.floor((Date.now() - startedAt) / 1000);
+      spinner.textContent = `Consultando Zoho Books… (${secs}s — con muchos documentos puede tardar varios minutos, no cierres esta pestaña)`;
+    }
+    updateSpinnerText();
+    const spinnerInterval = setInterval(updateSpinnerText, 1000);
+
     try {
       const res = await fetch("/api/crosssell", {
         method: "POST",
@@ -113,7 +125,9 @@
     } catch (err) {
       errorsBox.innerHTML = `<div class="error">${escapeHtml(err.message)}</div>`;
     } finally {
+      clearInterval(spinnerInterval);
       spinner.style.display = "none";
+      spinner.textContent = "Consultando Zoho Books…";
       btn.disabled = false;
     }
   }

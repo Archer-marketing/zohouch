@@ -200,6 +200,7 @@ async function listDocumentsByDateRange(account, { docType, dateFrom, dateTo }) 
         total: it.total,
       });
     }
+    console.log(`[zoho] ${account.name}: pagina ${page} de ${docType}, ${results.length} documentos hasta ahora`);
     hasMore = Boolean(json.page_context && json.page_context.has_more_page);
     page += 1;
     if (page > 100) break; // limite de seguridad (20k docs)

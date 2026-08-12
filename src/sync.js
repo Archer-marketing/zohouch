@@ -57,7 +57,16 @@ async function getDetailWithCache(account, docType, doc, cache) {
 async function fetchAccountDocDetails(account, docType, dateFrom, dateTo) {
   const docs = await zoho.listDocumentsByDateRange(account, { docType, dateFrom, dateTo });
   const cache = db.getAccountCache(account.id, docType);
-  const results = await asyncPool(5, docs, (doc) => getDetailWithCache(account, docType, doc, cache));
+
+  let processed = 0;
+  const results = await asyncPool(5, docs, async (doc) => {
+    const detail = await getDetailWithCache(account, docType, doc, cache);
+    processed += 1;
+    if (processed % 20 === 0 || processed === docs.length) {
+      console.log(`[sync] ${account.name}: detalle ${processed}/${docs.length} documentos`);
+    }
+    return detail;
+  });
 
   const cacheUpdates = {};
   const details = [];
