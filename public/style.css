@@ -99,4 +99,4 @@ th { color: var(--muted); font-weight: 600; }
 .checkbox-list label { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 14px; margin-bottom: 6px; }
 .checkbox-list input { width: auto; }
 
-#spinner { display: none; color: var(--muted); margin-top: 10px; }
+#spinner, #csSpinner { display: none; color: var(--muted); margin-top: 10px; }
