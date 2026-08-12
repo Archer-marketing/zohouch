@@ -6,6 +6,7 @@ const session = require("express-session");
 
 const auth = require("./auth");
 const db = require("./db");
+const { FileStore } = require("./sessionStore");
 const accountsRouter = require("../routes/accounts");
 const apiRouter = require("../routes/api");
 
@@ -18,8 +19,12 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "..", "public")));
 
+const sessionStore = new FileStore({ dataDir: db.DATA_DIR });
+setInterval(() => sessionStore.pruneExpired(), 60 * 60 * 1000).unref();
+
 app.use(
   session({
+    store: sessionStore,
     secret: process.env.SESSION_SECRET || "dev-secret-change-me",
     resave: false,
     saveUninitialized: false,
