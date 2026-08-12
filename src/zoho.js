@@ -23,7 +23,37 @@ function regionInfo(region) {
   return REGIONS[region] || REGIONS.com;
 }
 
-async function zohoFetch(url, options = {}) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Zoho Books permite 100 requests/minuto POR ORGANIZACION. Nos quedamos por
+// debajo (80) para no rozar el limite, y esperamos antes de mandar cada
+// request si ya gastamos el cupo de la ventana de 60s. Es por-organizacion
+// porque el limite de Zoho es por organizacion, no global de la app.
+const RATE_LIMIT_PER_MINUTE = 80;
+const RATE_WINDOW_MS = 60_000;
+const requestTimestamps = new Map(); // organizationId -> number[] (timestamps del ultimo minuto)
+
+async function throttle(organizationId) {
+  const key = organizationId || "default";
+  const now = Date.now();
+  let timestamps = (requestTimestamps.get(key) || []).filter((t) => now - t < RATE_WINDOW_MS);
+  if (timestamps.length >= RATE_LIMIT_PER_MINUTE) {
+    const waitMs = RATE_WINDOW_MS - (now - timestamps[0]) + 50;
+    await sleep(waitMs);
+    return throttle(organizationId);
+  }
+  timestamps.push(Date.now());
+  requestTimestamps.set(key, timestamps);
+}
+
+// Zoho no manda header Retry-After en el 429, asi que reintentamos con
+// backoff fijo creciente (5s, 10s, 20s) antes de rendirnos.
+const RATE_LIMIT_RETRIES = 3;
+const RATE_LIMIT_BASE_DELAY_MS = 5000;
+
+async function zohoFetch(url, options = {}, attempt = 0) {
   const res = await fetch(url, options);
   const text = await res.text();
   let json;
@@ -32,7 +62,20 @@ async function zohoFetch(url, options = {}) {
   } catch (e) {
     throw new Error(`Respuesta no-JSON de Zoho (${res.status}): ${text.slice(0, 300)}`);
   }
+
+  if (res.status === 429 && attempt < RATE_LIMIT_RETRIES) {
+    await sleep(RATE_LIMIT_BASE_DELAY_MS * Math.pow(2, attempt));
+    return zohoFetch(url, options, attempt + 1);
+  }
+
   if (!res.ok) {
+    if (res.status === 429) {
+      throw new Error(
+        "Zoho bloqueo temporalmente las consultas por exceso de solicitudes " +
+          "(limite de 100/minuto por organizacion). Espera unos minutos y volve " +
+          "a intentar, idealmente con un rango de fechas mas chico."
+      );
+    }
     throw new Error(
       `Zoho API error ${res.status}: ${json.message || JSON.stringify(json)}`
     );
@@ -108,6 +151,7 @@ async function authedFetch(account, path, { method = "GET", query = {} } = {}) {
   const { api } = regionInfo(account.region);
   const params = new URLSearchParams({ organization_id: account.organizationId, ...query });
   const url = `https://${api}/books/v3${path}?${params.toString()}`;
+  await throttle(account.organizationId);
   return zohoFetch(url, {
     method,
     headers: { Authorization: `Zoho-oauthtoken ${token}` },
