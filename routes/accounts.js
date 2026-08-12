@@ -39,6 +39,24 @@ router.post("/accounts/:id/delete", (req, res) => {
   res.redirect("/accounts?flash=" + encodeURIComponent("Cuenta eliminada."));
 });
 
+// Ping rapido (1 sola request, sin reintentos) para saber al toque si Zoho
+// esta respondiendo bien esta cuenta o si nos tiene bloqueados/frenados por
+// exceso de solicitudes, sin tener que esperar una corrida completa.
+router.post("/accounts/:id/test", async (req, res) => {
+  const account = db.getAccount(req.params.id, { includeSecrets: true });
+  if (!account) return res.status(404).json({ ok: false, error: "Cuenta no encontrada." });
+  if (!account.refreshToken) {
+    return res.json({ ok: false, error: "Esta cuenta todavia no esta conectada (falta autorizar OAuth)." });
+  }
+  const startedAt = Date.now();
+  try {
+    await zoho.testConnection(account);
+    res.json({ ok: true, elapsedMs: Date.now() - startedAt });
+  } catch (err) {
+    res.json({ ok: false, error: err.message });
+  }
+});
+
 // Paso 1 del OAuth: manda al usuario a la pantalla de consentimiento de Zoho.
 router.get("/accounts/:id/connect", (req, res) => {
   const account = db.getAccount(req.params.id, { includeSecrets: true });

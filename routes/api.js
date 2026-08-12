@@ -5,6 +5,7 @@ const zoho = require("../src/zoho");
 const { runSync, computeCrossSell } = require("../src/sync");
 const { rowsToCsv } = require("../src/csv");
 const runStore = require("../src/runStore");
+const progressStore = require("../src/progressStore");
 
 const router = express.Router();
 
@@ -67,7 +68,12 @@ router.post("/api/sync", async (req, res) => {
   }
 });
 
-router.post("/api/crosssell", async (req, res) => {
+// Venta cruzada corre como "trabajo en segundo plano": este endpoint solo
+// arranca el trabajo y devuelve un jobId al toque. El frontend consulta
+// /api/crosssell/status/:jobId cada 1-2s para ver progreso en tiempo real
+// (incluyendo si Zoho esta frenando/bloqueando las consultas) en vez de
+// quedarse una sola espera larga y ciega hasta que termine todo.
+router.post("/api/crosssell/start", (req, res) => {
   const { accountId, docType, dateFrom, dateTo, recDateFrom, recDateTo, customerId } = req.body;
 
   if (!accountId) return res.status(400).json({ error: "Selecciona una cuenta de Zoho Books." });
@@ -76,22 +82,32 @@ router.post("/api/crosssell", async (req, res) => {
     return res.status(400).json({ error: "Falta el Customer ID de Zoho." });
   }
 
-  try {
-    const result = await computeCrossSell({
-      accountId,
-      docType: docType || "invoices",
-      dateFrom,
-      dateTo,
-      // Si no mandan un rango de recomendaciones aparte, usa el mismo del cliente.
-      recDateFrom: recDateFrom || dateFrom,
-      recDateTo: recDateTo || dateTo,
-      customerId: String(customerId).trim(),
+  const jobId = crypto.randomUUID();
+  progressStore.create(jobId);
+
+  computeCrossSell({
+    accountId,
+    docType: docType || "invoices",
+    dateFrom,
+    dateTo,
+    recDateFrom: recDateFrom || dateFrom,
+    recDateTo: recDateTo || dateTo,
+    customerId: String(customerId).trim(),
+    onStatus: (message) => progressStore.update(jobId, message),
+  })
+    .then((result) => progressStore.finish(jobId, result))
+    .catch((err) => {
+      console.error(err);
+      progressStore.fail(jobId, err.message);
     });
-    res.json(result);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
+
+  res.json({ jobId });
+});
+
+router.get("/api/crosssell/status/:jobId", (req, res) => {
+  const job = progressStore.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: "Ese trabajo ya no existe (expiro o el servidor se reinicio)." });
+  res.json(job);
 });
 
 router.get("/api/export/:runId.csv", (req, res) => {

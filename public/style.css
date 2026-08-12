@@ -89,7 +89,7 @@ th { color: var(--muted); font-weight: 600; }
 .badge.ok { color: var(--accent-2); border-color: var(--accent-2); }
 .badge.warn { color: #f0b429; border-color: #f0b429; }
 
-.account-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.account-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .account-row:last-child { border-bottom: none; }
 .account-actions { display: flex; gap: 8px; }
 

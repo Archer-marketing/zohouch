@@ -32,11 +32,15 @@
             <% } %>
           </div>
           <div class="account-actions">
+            <% if (acc.hasRefreshToken) { %>
+              <button class="secondary test-conn-btn" type="button" data-account-id="<%= acc.id %>">Probar conexión</button>
+            <% } %>
             <a href="/accounts/<%= acc.id %>/connect"><button class="secondary" type="button"><%= acc.hasRefreshToken ? 'Reconectar' : 'Conectar' %></button></a>
             <form method="POST" action="/accounts/<%= acc.id %>/delete" onsubmit="return confirm('¿Eliminar esta cuenta y su cache?');">
               <button class="danger" type="submit">Eliminar</button>
             </form>
           </div>
+          <div class="test-conn-result muted" style="font-size:12px; width:100%; margin-top:6px;"></div>
         </div>
       <% }); %>
       <% if (accounts.length === 0) { %>
@@ -82,5 +86,6 @@
       </p>
     </div>
   </div>
+  <script src="/accounts.js"></script>
 </body>
 </html>

@@ -78,19 +78,21 @@
     recCard.style.display = "none";
     emptyState.style.display = "none";
 
-    // Contador visible: con rangos grandes puede tardar varios minutos
-    // (Zoho limita a 100 requests/minuto), y sin esto la pantalla parece
-    // colgada aunque siga trabajando.
+    // En vez de una sola espera larga y ciega, arrancamos el trabajo en el
+    // servidor y consultamos su progreso real cada 1.5s (incluye avisos de
+    // "Zoho me esta frenando/bloqueando" en tiempo real, no solo un contador
+    // de segundos).
     const startedAt = Date.now();
-    function updateSpinnerText() {
+    let lastMessage = "Iniciando…";
+    function renderSpinner() {
       const secs = Math.floor((Date.now() - startedAt) / 1000);
-      spinner.textContent = `Consultando Zoho Books… (${secs}s — con muchos documentos puede tardar varios minutos, no cierres esta pestaña)`;
+      spinner.textContent = `${lastMessage} (${secs}s)`;
     }
-    updateSpinnerText();
-    const spinnerInterval = setInterval(updateSpinnerText, 1000);
+    renderSpinner();
+    const spinnerInterval = setInterval(renderSpinner, 1000);
 
     try {
-      const res = await fetch("/api/crosssell", {
+      const startRes = await fetch("/api/crosssell/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -103,9 +105,23 @@
           customerId,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Error desconocido");
+      const startData = await startRes.json();
+      if (!startRes.ok) throw new Error(startData.error || "Error desconocido");
 
+      const jobId = startData.jobId;
+      let job;
+      while (true) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const statusRes = await fetch(`/api/crosssell/status/${jobId}`);
+        job = await statusRes.json();
+        if (!statusRes.ok) throw new Error(job.error || "Error consultando el progreso.");
+        if (job.message) lastMessage = job.message;
+        if (job.done) break;
+      }
+
+      if (job.error) throw new Error(job.error);
+
+      const data = job.result;
       renderStats(data.stats, data.found);
 
       if (!data.found) {

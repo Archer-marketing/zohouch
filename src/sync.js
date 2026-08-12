@@ -42,28 +42,32 @@ function normalizePhone(raw) {
   return cleaned;
 }
 
-async function getDetailWithCache(account, docType, doc, cache) {
+async function getDetailWithCache(account, docType, doc, cache, onStatus) {
   const cached = cache[doc.id];
   if (cached && cached.lastModifiedTime === doc.lastModifiedTime) {
     return { id: doc.id, contactId: cached.contactId, lineItems: cached.lineItems, date: cached.date };
   }
-  const detail = await zoho.getDocumentDetail(account, docType, doc.id);
+  const detail = await zoho.getDocumentDetail(account, docType, doc.id, onStatus);
   return detail;
 }
 
 // Trae el detalle (line items) de todos los documentos de una cuenta en un
 // rango de fechas, usando el cache en disco para no re-pedir los que no
 // cambiaron desde la ultima vez. Compartido entre runSync y computeCrossSell.
-async function fetchAccountDocDetails(account, docType, dateFrom, dateTo) {
-  const docs = await zoho.listDocumentsByDateRange(account, { docType, dateFrom, dateTo });
+// onStatus(mensaje) se llama en tiempo real (throttle esperando, reintentos
+// por 429, progreso de listado/detalle) para poder mostrarlo en la UI.
+async function fetchAccountDocDetails(account, docType, dateFrom, dateTo, onStatus) {
+  const docs = await zoho.listDocumentsByDateRange(account, { docType, dateFrom, dateTo }, onStatus);
   const cache = db.getAccountCache(account.id, docType);
 
   let processed = 0;
   const results = await asyncPool(5, docs, async (doc) => {
-    const detail = await getDetailWithCache(account, docType, doc, cache);
+    const detail = await getDetailWithCache(account, docType, doc, cache, onStatus);
     processed += 1;
     if (processed % 20 === 0 || processed === docs.length) {
-      console.log(`[sync] ${account.name}: detalle ${processed}/${docs.length} documentos`);
+      const msg = `${account.name}: detalle ${processed}/${docs.length} documentos`;
+      console.log(`[sync] ${msg}`);
+      if (onStatus) onStatus(`Trayendo detalle de documentos: ${processed}/${docs.length}…`);
     }
     return detail;
   });
@@ -223,12 +227,14 @@ async function computeCrossSell({
   recDateFrom,
   recDateTo,
   customerId,
+  onStatus,
 }) {
   const account = db.getAccount(accountId, { includeSecrets: true });
   if (!account) throw new Error("Cuenta no encontrada.");
 
+  if (onStatus) onStatus("Trayendo compras del cliente…");
   const { details: targetDetails, docsScanned: targetDocsScanned, errors: targetErrors } =
-    await fetchAccountDocDetails(account, docType, dateFrom, dateTo);
+    await fetchAccountDocDetails(account, docType, dateFrom, dateTo, onStatus);
 
   const targetEntry = groupByContact(targetDetails).get(customerId);
 
@@ -249,11 +255,13 @@ async function computeCrossSell({
     recDocsScanned = 0;
     recErrors = [];
   } else {
+    if (onStatus) onStatus("Trayendo compras de otros clientes para las recomendaciones…");
     ({ details: recDetails, docsScanned: recDocsScanned, errors: recErrors } = await fetchAccountDocDetails(
       account,
       docType,
       recDateFrom,
-      recDateTo
+      recDateTo,
+      onStatus
     ));
   }
   const byContactRec = groupByContact(recDetails);

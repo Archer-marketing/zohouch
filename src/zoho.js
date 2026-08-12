@@ -35,14 +35,17 @@ const RATE_LIMIT_PER_MINUTE = 80;
 const RATE_WINDOW_MS = 60_000;
 const requestTimestamps = new Map(); // organizationId -> number[] (timestamps del ultimo minuto)
 
-async function throttle(organizationId) {
+async function throttle(organizationId, onStatus) {
   const key = organizationId || "default";
   const now = Date.now();
   let timestamps = (requestTimestamps.get(key) || []).filter((t) => now - t < RATE_WINDOW_MS);
   if (timestamps.length >= RATE_LIMIT_PER_MINUTE) {
     const waitMs = RATE_WINDOW_MS - (now - timestamps[0]) + 50;
+    if (onStatus) {
+      onStatus(`Frenando para no pasarnos del limite de Zoho (80/min), esperando ${Math.ceil(waitMs / 1000)}s…`);
+    }
     await sleep(waitMs);
-    return throttle(organizationId);
+    return throttle(organizationId, onStatus);
   }
   timestamps.push(Date.now());
   requestTimestamps.set(key, timestamps);
@@ -53,7 +56,7 @@ async function throttle(organizationId) {
 const RATE_LIMIT_RETRIES = 3;
 const RATE_LIMIT_BASE_DELAY_MS = 5000;
 
-async function zohoFetch(url, options = {}, attempt = 0) {
+async function zohoFetch(url, options = {}, attempt = 0, { skipRetry = false, onStatus } = {}) {
   const res = await fetch(url, options);
   const text = await res.text();
   let json;
@@ -63,9 +66,17 @@ async function zohoFetch(url, options = {}, attempt = 0) {
     throw new Error(`Respuesta no-JSON de Zoho (${res.status}): ${text.slice(0, 300)}`);
   }
 
-  if (res.status === 429 && attempt < RATE_LIMIT_RETRIES) {
-    await sleep(RATE_LIMIT_BASE_DELAY_MS * Math.pow(2, attempt));
-    return zohoFetch(url, options, attempt + 1);
+  if (res.status === 429 && !skipRetry && attempt < RATE_LIMIT_RETRIES) {
+    const waitMs = RATE_LIMIT_BASE_DELAY_MS * Math.pow(2, attempt);
+    if (onStatus) {
+      onStatus(
+        `Zoho respondio "demasiadas solicitudes" (429). Reintentando en ${Math.ceil(waitMs / 1000)}s ` +
+          `(intento ${attempt + 1}/${RATE_LIMIT_RETRIES})…`
+      );
+    }
+    console.log(`[zoho] 429 recibido, reintentando en ${waitMs}ms (intento ${attempt + 1}/${RATE_LIMIT_RETRIES})`);
+    await sleep(waitMs);
+    return zohoFetch(url, options, attempt + 1, { skipRetry, onStatus });
   }
 
   if (!res.ok) {
@@ -146,16 +157,30 @@ async function getAccessToken(account) {
   return json.access_token;
 }
 
-async function authedFetch(account, path, { method = "GET", query = {} } = {}) {
+async function authedFetch(
+  account,
+  path,
+  { method = "GET", query = {}, skipRetry = false, skipThrottle = false, onStatus } = {}
+) {
   const token = await getAccessToken(account);
   const { api } = regionInfo(account.region);
   const params = new URLSearchParams({ organization_id: account.organizationId, ...query });
   const url = `https://${api}/books/v3${path}?${params.toString()}`;
-  await throttle(account.organizationId);
-  return zohoFetch(url, {
-    method,
-    headers: { Authorization: `Zoho-oauthtoken ${token}` },
-  });
+  if (!skipThrottle) await throttle(account.organizationId, onStatus);
+  return zohoFetch(
+    url,
+    { method, headers: { Authorization: `Zoho-oauthtoken ${token}` } },
+    0,
+    { skipRetry, onStatus }
+  );
+}
+
+// Ping liviano (1 request, sin reintentos ni cola de throttle) para el boton
+// de "Probar conexion": responde rapido si Zoho esta bloqueando esta cuenta
+// en vez de hacer esperar al usuario los reintentos con backoff completos.
+async function testConnection(account) {
+  await authedFetch(account, "/items", { query: { per_page: 1 }, skipRetry: true, skipThrottle: true });
+  return true;
 }
 
 // ---------- Endpoints usados por el panel ----------
@@ -167,7 +192,7 @@ const DOC_CONFIG = {
 
 // Trae TODOS los documentos (facturas o pedidos) creados/modificados dentro
 // del rango de fechas, paginando. Devuelve resumenes livianos (sin line items).
-async function listDocumentsByDateRange(account, { docType, dateFrom, dateTo }) {
+async function listDocumentsByDateRange(account, { docType, dateFrom, dateTo }, onStatus) {
   const cfg = DOC_CONFIG[docType];
   if (!cfg) throw new Error(`docType invalido: ${docType}`);
 
@@ -176,6 +201,7 @@ async function listDocumentsByDateRange(account, { docType, dateFrom, dateTo }) 
   let hasMore = true;
 
   while (hasMore) {
+    if (onStatus) onStatus(`Listando ${docType === "invoices" ? "facturas" : "pedidos"}, pagina ${page}…`);
     const json = await authedFetch(account, cfg.listPath, {
       query: {
         // date_start/date_end son filtros genericos por campo de Zoho Books y
@@ -187,6 +213,7 @@ async function listDocumentsByDateRange(account, { docType, dateFrom, dateTo }) 
         per_page: 200,
         sort_column: "date",
       },
+      onStatus,
     });
     const items = json[cfg.listKey] || [];
     for (const it of items) {
@@ -209,9 +236,9 @@ async function listDocumentsByDateRange(account, { docType, dateFrom, dateTo }) 
 }
 
 // Detalle de un documento puntual, incluyendo line_items (para filtrar por producto).
-async function getDocumentDetail(account, docType, id) {
+async function getDocumentDetail(account, docType, id, onStatus) {
   const cfg = DOC_CONFIG[docType];
-  const json = await authedFetch(account, cfg.detailPath(id));
+  const json = await authedFetch(account, cfg.detailPath(id), { onStatus });
   const doc = json[docType === "invoices" ? "invoice" : "salesorder"];
   return {
     id: doc[cfg.idField],
@@ -268,6 +295,7 @@ module.exports = {
   buildAuthUrl,
   exchangeCodeForTokens,
   getAccessToken,
+  testConnection,
   listDocumentsByDateRange,
   getDocumentDetail,
   getContact,
